@@ -1,0 +1,30 @@
+[workspace]
+members = ["crates/snipsplit-core", "crates/snipsplit-py"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Mukunda Katta"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.75"
+repository = "https://github.com/MukundaKatta/snipsplit"
+homepage = "https://github.com/MukundaKatta/snipsplit"
+documentation = "https://docs.rs/snipsplit-core"
+readme = "README.md"
+keywords = ["chunker", "rag", "tokenizer", "split", "llm"]
+categories = ["text-processing", "science"]
+
+[workspace.dependencies]
+# Same BPE engine toklab uses; cl100k and o200k bundled.
+tiktoken-rs = "0.6"
+# Sentence boundary regex + paragraph splits.
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+# Optional: parallel split_many.
+rayon = "1.10"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
