@@ -69,18 +69,20 @@ struct PyChunker {
 #[pymethods]
 impl PyChunker {
     #[new]
-    #[pyo3(signature = (*, max_tokens=512, overlap_tokens=0, min_tokens=1, encoding="cl100k_base"))]
+    #[pyo3(signature = (*, max_tokens=512, overlap_tokens=0, min_tokens=1, encoding="cl100k_base", preserve_paragraphs=false))]
     fn new(
         max_tokens: usize,
         overlap_tokens: usize,
         min_tokens: usize,
         encoding: &str,
+        preserve_paragraphs: bool,
     ) -> PyResult<Self> {
         let inner = Chunker::new(ChunkConfig {
             max_tokens,
             overlap_tokens,
             min_tokens,
             encoding: encoding.to_string(),
+            preserve_paragraphs,
         })
         .map_err(map_err)?;
         Ok(Self { inner })

@@ -1,16 +1,23 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.1.1] - 2026-05-10
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Added
+- `ChunkConfig.preserve_paragraphs` (default `false`): when `true`, blank-
+  line-separated paragraphs become hard chunk boundaries — content from
+  two paragraphs never gets packed into the same chunk even if the token
+  budget would allow it. Useful for documents with semantically distinct
+  sections (FAQs, news articles, code blocks separated from prose).
+- New `split_paragraphs(text)` helper used internally; available via
+  module-private API today, may be promoted in a future minor release.
 
-## [Unreleased]
+### Tests
+- 4 new tests covering paragraph preservation behavior, default behavior
+  unchanged, and span offset translation.
 
 ## [0.1.0] - 2026-05-09
 
 ### Added
-
 - Initial public release.
 - Rust core crate `snipsplit-core` wrapping
   [tiktoken-rs](https://crates.io/crates/tiktoken-rs) for cl100k/o200k.
@@ -21,6 +28,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `split_many(texts, parallel=true)` parallel batch ingestion via rayon.
 - Python package `snipsplit` with PyO3 bindings.
 - abi3-py310 wheel: one wheel for CPython 3.10 through 3.13.
-
-[Unreleased]: https://github.com/MukundaKatta/snipsplit/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/MukundaKatta/snipsplit/releases/tag/v0.1.0

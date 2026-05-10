@@ -51,6 +51,12 @@ pub struct ChunkConfig {
     pub min_tokens: usize,
     /// Encoding name (`cl100k_base` or `o200k_base`).
     pub encoding: String,
+    /// Treat blank-line-separated paragraphs as hard boundaries: never
+    /// pack content from two paragraphs into the same chunk, even if the
+    /// budget allows it. Default: `false` (the historical behavior).
+    /// Useful for documents with semantically distinct sections.
+    #[serde(default)]
+    pub preserve_paragraphs: bool,
 }
 
 impl Default for ChunkConfig {
@@ -60,6 +66,7 @@ impl Default for ChunkConfig {
             overlap_tokens: 0,
             min_tokens: 1,
             encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: false,
         }
     }
 }
@@ -131,6 +138,31 @@ impl Chunker {
 
     /// Split `text` into chunks.
     pub fn split(&self, text: &str) -> Result<Vec<Chunk>> {
+        // If `preserve_paragraphs` is enabled, split into paragraphs first
+        // and chunk each independently. Each paragraph is treated as an
+        // isolated input — overlap is per-paragraph, not across boundaries.
+        if self.cfg.preserve_paragraphs {
+            let mut all: Vec<Chunk> = Vec::new();
+            let paragraphs = split_paragraphs(text);
+            for (p_start, p_end) in paragraphs {
+                let para_text = &text[p_start..p_end];
+                let mut chunks = self.split_internal(para_text)?;
+                // Translate chunk spans back to absolute offsets in the
+                // original text.
+                for c in &mut chunks {
+                    c.start += p_start;
+                    c.end += p_start;
+                }
+                all.extend(chunks);
+            }
+            return Ok(all);
+        }
+        self.split_internal(text)
+    }
+
+    /// Internal entry point that does the actual work. Operates on a
+    /// single paragraph (or the whole text in the default case).
+    fn split_internal(&self, text: &str) -> Result<Vec<Chunk>> {
         // Step 1: collect sentence spans (start, end) into the original text.
         let sentences = self.split_sentences(text);
         if sentences.is_empty() {
@@ -287,6 +319,44 @@ impl Chunker {
 
 /// Suffix-check the string against a small list of common English
 /// abbreviations that produce false positives in sentence splitting.
+/// Split text into paragraph spans. Paragraphs are runs of non-whitespace
+/// content separated by 2+ consecutive newlines (`\n\n`). Returns
+/// `(byte_start, byte_end)` half-open ranges, never overlapping.
+fn split_paragraphs(text: &str) -> Vec<(usize, usize)> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut start: Option<usize> = None;
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            // Count consecutive newlines.
+            let mut nl_end = i;
+            while nl_end < bytes.len() && bytes[nl_end] == b'\n' {
+                nl_end += 1;
+            }
+            if nl_end - i >= 2 {
+                // Paragraph break.
+                if let Some(s) = start.take() {
+                    spans.push((s, i));
+                }
+                i = nl_end;
+                continue;
+            }
+        }
+        if start.is_none() {
+            start = Some(i);
+        }
+        i += 1;
+    }
+    if let Some(s) = start {
+        spans.push((s, text.len()));
+    }
+    spans
+}
+
 fn is_abbreviation(prefix: &str) -> bool {
     const ABBREVS: &[&str] = &[
         "mr.", "mrs.", "ms.", "dr.", "st.", "jr.", "sr.", "prof.", "rev.", "vs.", "etc.", "e.g.",
@@ -314,6 +384,7 @@ mod tests {
             overlap_tokens: 0,
             min_tokens: 1,
             encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: false,
         }
     }
 
@@ -371,6 +442,7 @@ mod tests {
             overlap_tokens: 2,
             min_tokens: 1,
             encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: false,
         })
         .unwrap();
         let text = "Alpha beta gamma. Delta epsilon zeta. Eta theta iota.";
@@ -392,6 +464,7 @@ mod tests {
             overlap_tokens: 0,
             min_tokens: 50,
             encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: false,
         })
         .unwrap();
         let text = "tiny.";
@@ -482,9 +555,78 @@ mod tests {
             overlap_tokens: 0,
             min_tokens: 5,
             encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: false,
         })
         .unwrap();
         let r = c.split("hi").unwrap();
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn preserve_paragraphs_emits_per_paragraph_chunks() {
+        // Two paragraphs that would individually fit in one chunk. With
+        // preserve_paragraphs we get 2 chunks, with absolute byte offsets.
+        let c = Chunker::new(ChunkConfig {
+            max_tokens: 100,
+            overlap_tokens: 0,
+            min_tokens: 1,
+            encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: true,
+        })
+        .unwrap();
+        let text = "First paragraph here.\n\nSecond paragraph here.";
+        let r = c.split(text).unwrap();
+        assert_eq!(r.len(), 2);
+        // Span check: each chunk's start/end maps back into the original.
+        for ch in &r {
+            assert!(ch.end <= text.len());
+            assert!(text.get(ch.start..ch.end).is_some());
+        }
+    }
+
+    #[test]
+    fn preserve_paragraphs_respects_token_budget_per_paragraph() {
+        // One paragraph alone exceeds the budget, the other fits. We
+        // should still get separate-paragraph chunks.
+        let c = Chunker::new(ChunkConfig {
+            max_tokens: 5,
+            overlap_tokens: 0,
+            min_tokens: 1,
+            encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: true,
+        })
+        .unwrap();
+        let text = "alpha beta gamma delta epsilon zeta\n\nshort.";
+        let r = c.split(text).unwrap();
+        // First paragraph splits into 2+ pieces; second is one piece.
+        assert!(r.len() >= 2);
+    }
+
+    #[test]
+    fn split_paragraphs_helper_returns_disjoint_spans() {
+        let text = "para 1\n\n\npara 2\n\npara 3";
+        let spans = split_paragraphs(text);
+        assert_eq!(spans.len(), 3);
+        // Reconstruct each paragraph and verify against input.
+        assert_eq!(&text[spans[0].0..spans[0].1], "para 1");
+        assert_eq!(&text[spans[1].0..spans[1].1], "para 2");
+        assert_eq!(&text[spans[2].0..spans[2].1], "para 3");
+    }
+
+    #[test]
+    fn preserve_paragraphs_default_off_keeps_existing_behavior() {
+        // Confirm we didn't accidentally break the default. Two paragraphs
+        // that fit together should produce one chunk.
+        let c = Chunker::new(ChunkConfig {
+            max_tokens: 100,
+            overlap_tokens: 0,
+            min_tokens: 1,
+            encoding: "cl100k_base".to_string(),
+            preserve_paragraphs: false,
+        })
+        .unwrap();
+        let text = "First paragraph here.\n\nSecond paragraph here.";
+        let r = c.split(text).unwrap();
+        assert_eq!(r.len(), 1);
     }
 }

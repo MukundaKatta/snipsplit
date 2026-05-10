@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "snipsplit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Token-aware text chunker for RAG ingestion. Sentence-respecting, overlap-friendly."
 authors = [{ name = "Mukunda Katta" }]
 license = "MIT OR Apache-2.0"
