@@ -17,7 +17,7 @@ categories = ["text-processing", "science"]
 
 [workspace.dependencies]
 # Same BPE engine toklab uses; cl100k and o200k bundled.
-tiktoken-rs = "0.6"
+tiktoken-rs = "0.12"
 # Sentence boundary regex + paragraph splits.
 regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
